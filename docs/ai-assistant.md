@@ -22,11 +22,13 @@ during the current session.
 
 ## DeepSeek Web without an API key
 
-Choose **Open DeepSeek Web** in the assistant header to open `https://chat.deepseek.com/` in the
-system browser. Sign in to your DeepSeek account there and keep the chat beside WordCraft by placing
-the browser window next to the app. This uses the DeepSeek website, not its API: prompts and replies
-stay in the browser, so copy the response and paste it into WordCraft yourself. The site is not
-embedded in the egui desktop window.
+On Windows, choose **DeepSeek no app** in the assistant header to show `https://chat.deepseek.com/`
+in a panel on the right side of the same WordCraft window. No separate browser window is opened.
+Sign in inside that panel; the WebView profile is kept in WordCraft's settings folder so the login
+can persist between launches. This uses the DeepSeek website, not its API: prompts and replies stay
+in the website, so copy a response and paste it into WordCraft yourself. Choose **Fechar DeepSeek**
+to hide the panel. On other desktop platforms, use the OpenAI-compatible API option with a DeepSeek
+API endpoint if you want DeepSeek inside the assistant's normal chat UI.
 
 Cloud provider keys are sent only to the selected provider over HTTPS. API usage and billing follow
 the account and terms of that provider. The compatible endpoint setting is intended for trusted
