@@ -146,7 +146,8 @@ impl AiAgent {
             let mut web_rect = None;
             egui::Panel::right("wordcraft.ai.docked-panel")
                 .default_size(420.0)
-                .size_range(320.0..=640.0)
+                .min_size(320.0)
+                .max_size(640.0)
                 .resizable(true)
                 .show_inside(ui, |panel| {
                     panel.horizontal(|panel| {
