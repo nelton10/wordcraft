@@ -3,6 +3,7 @@
 //! Provider credentials are requested at launch, kept only in memory, and never written to
 //! preferences or logs. Ollama runs locally; cloud providers receive prompts over HTTPS.
 
+use std::io::{BufRead, BufReader};
 use std::sync::mpsc::{Receiver, channel};
 use std::time::Duration;
 
@@ -70,6 +71,12 @@ struct RequestConfig {
     model: String,
     endpoint: String,
     api_key: Option<Zeroizing<String>>,
+    keep_ollama_loaded: bool,
+}
+
+enum RequestEvent {
+    Text(String),
+    Finished(Result<(), String>),
 }
 
 #[cfg(target_os = "windows")]
@@ -89,10 +96,11 @@ pub struct AiAgent {
     prompt: String,
     generated: Option<String>,
     status: String,
-    pending: Option<Receiver<Result<String, String>>>,
+    pending: Option<Receiver<RequestEvent>>,
     insert_when_ready: bool,
     split_response: bool,
     split_parts: usize,
+    keep_ollama_loaded: bool,
     #[cfg(target_os = "windows")]
     deepseek_open: bool,
     #[cfg(target_os = "windows")]
@@ -119,6 +127,7 @@ impl Default for AiAgent {
             insert_when_ready: false,
             split_response: false,
             split_parts: 3,
+            keep_ollama_loaded: true,
             #[cfg(target_os = "windows")]
             deepseek_open: false,
             #[cfg(target_os = "windows")]
@@ -314,6 +323,10 @@ impl AiAgent {
             if self.split_response {
                 ui.small("Ollama receberá solicitações sequenciais, com uma parte por vez.");
             }
+            ui.checkbox(&mut self.keep_ollama_loaded, "Manter modelo carregado (respostas seguintes mais rápidas)");
+            if self.keep_ollama_loaded {
+                ui.small("O modelo permanece na memória por 10 minutos após a resposta.");
+            }
         }
         ui.horizontal(|ui| {
             let disabled = self.pending.is_some() || !self.is_configured() || self.prompt.trim().is_empty();
@@ -327,7 +340,11 @@ impl AiAgent {
         if self.pending.is_some() {
             ui.horizontal(|ui| {
                 ui.spinner();
-                ui.label("Preparando o texto…");
+                ui.label(if self.generated.as_deref().is_some_and(|text| !text.is_empty()) {
+                    "Gerando; o texto aparece enquanto chega…"
+                } else {
+                    "Carregando o modelo e iniciando…"
+                });
             });
         }
         if !self.status.is_empty() {
@@ -380,6 +397,7 @@ impl AiAgent {
             model: self.model.clone(),
             endpoint: self.endpoint.clone(),
             api_key: self.api_key.as_ref().map(|key| Zeroizing::new(key.as_str().to_string())),
+            keep_ollama_loaded: self.keep_ollama_loaded,
         };
         let prompt = prompt.to_string();
         let split_parts = (self.provider == Provider::Ollama && self.split_response)
@@ -387,16 +405,23 @@ impl AiAgent {
         let (tx, rx) = channel();
         let repaint = ctx.clone();
         std::thread::spawn(move || {
-            let result = match split_parts {
-                Some(parts) => request_model_in_parts(&config, &prompt, parts),
-                None => request_model(&config, &prompt),
+            let agent = build_http_agent(config.provider);
+            let mut emit_text = |text: String| {
+                tx.send(RequestEvent::Text(text)).map_err(|_| "O painel de IA foi fechado.".to_string())?;
+                repaint.request_repaint();
+                Ok(())
             };
-            let _ = tx.send(result);
+            let result = match split_parts {
+                Some(parts) => request_model_in_parts(&config, &prompt, parts, &agent, &mut emit_text),
+                None => request_model(&config, &prompt, &agent, &mut emit_text),
+            };
+            drop(emit_text);
+            let _ = tx.send(RequestEvent::Finished(result));
             repaint.request_repaint();
         });
         self.pending = Some(rx);
         self.insert_when_ready = insert_when_ready;
-        self.generated = None;
+        self.generated = Some(String::new());
         self.status = if let Some(parts) = split_parts {
             format!("Ollama vai gerar a resposta em {parts} partes sequenciais…")
         } else {
@@ -405,21 +430,39 @@ impl AiAgent {
     }
 
     fn receive_result(&mut self, app: &mut WordApp) {
-        let Some(receiver) = self.pending.as_ref() else { return };
-        let Ok(result) = receiver.try_recv() else { return };
-        self.pending = None;
-        match result {
-            Ok(text) => {
-                self.generated = Some(text.clone());
-                if self.insert_when_ready {
-                    self.insert_into_document(app, text);
-                } else {
-                    self.status = "Resposta pronta. Revise e escolha se deseja inserir no documento.".into();
+        let mut events = Vec::new();
+        if let Some(receiver) = self.pending.as_ref() {
+            while let Ok(event) = receiver.try_recv() {
+                events.push(event);
+            }
+        }
+        for event in events {
+            match event {
+                RequestEvent::Text(text) => {
+                    if let Some(generated) = self.generated.as_mut() {
+                        generated.push_str(&text);
+                    }
+                }
+                RequestEvent::Finished(Ok(())) => {
+                    self.pending = None;
+                    if self.insert_when_ready {
+                        if let Some(text) = self.generated.clone() {
+                            self.insert_into_document(app, text);
+                        }
+                    } else {
+                        self.status = "Resposta pronta. Revise e escolha se deseja inserir no documento.".into();
+                    }
+                    self.insert_when_ready = false;
+                    break;
+                }
+                RequestEvent::Finished(Err(error)) => {
+                    self.pending = None;
+                    self.status = error;
+                    self.insert_when_ready = false;
+                    break;
                 }
             }
-            Err(error) => self.status = error,
         }
-        self.insert_when_ready = false;
     }
 
     fn insert_into_document(&mut self, app: &mut WordApp, text: String) {
@@ -495,14 +538,36 @@ impl Drop for EmbeddedDeepSeek {
     }
 }
 
-fn request_model(config: &RequestConfig, prompt: &str) -> Result<String, String> {
-    request_model_with_token_limit(config, prompt, 4000)
+fn build_http_agent(provider: Provider) -> ureq::Agent {
+    let timeout = if provider == Provider::Ollama { 600 } else { 90 };
+    ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(timeout)))
+        .build()
+        .into()
 }
 
-fn request_model_in_parts(config: &RequestConfig, prompt: &str, parts: usize) -> Result<String, String> {
-    let mut response = String::new();
+fn request_model(
+    config: &RequestConfig,
+    prompt: &str,
+    agent: &ureq::Agent,
+    emit: &mut impl FnMut(String) -> Result<(), String>,
+) -> Result<(), String> {
+    let mut output = String::new();
+    let mut output_chars = 0;
+    request_model_with_token_limit(config, prompt, 4000, agent, emit, &mut output, &mut output_chars)
+}
+
+fn request_model_in_parts(
+    config: &RequestConfig,
+    prompt: &str,
+    parts: usize,
+    agent: &ureq::Agent,
+    emit: &mut impl FnMut(String) -> Result<(), String>,
+) -> Result<(), String> {
+    let mut full_response = String::new();
+    let mut output_chars = 0;
     for part in 1..=parts {
-        let previous_tail = response
+        let previous_tail = full_response
             .chars()
             .rev()
             .take(400)
@@ -520,31 +585,41 @@ fn request_model_in_parts(config: &RequestConfig, prompt: &str, parts: usize) ->
              Agora escreva somente a parte {part} de {parts}. Não repita o que já foi pedido e não escreva as outras partes. \
              Mantenha a numeração contínua e termine esta parte em um ponto natural. Limite esta parte a aproximadamente 900 tokens."
         );
-        let text = request_model_with_token_limit(config, &part_prompt, 1200)?;
-        if !response.is_empty() {
-            response.push_str("\n\n");
+        if part > 1 {
+            append_output(&mut full_response, &mut output_chars, "\n\n", emit)?;
         }
-        response.push_str(&text);
-        if response.chars().count() > MAX_OUTPUT_CHARS {
-            return Err("A resposta dividida passou do limite de tamanho do WordCraft.".into());
-        }
+        request_model_with_token_limit(
+            config,
+            &part_prompt,
+            1200,
+            agent,
+            emit,
+            &mut full_response,
+            &mut output_chars,
+        )?;
     }
-    Ok(response)
+    Ok(())
 }
 
-fn request_model_with_token_limit(config: &RequestConfig, prompt: &str, max_tokens: usize) -> Result<String, String> {
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_global(Some(Duration::from_secs(90)))
-        .build()
-        .into();
+fn request_model_with_token_limit(
+    config: &RequestConfig,
+    prompt: &str,
+    max_tokens: usize,
+    agent: &ureq::Agent,
+    emit: &mut impl FnMut(String) -> Result<(), String>,
+    output: &mut String,
+    output_chars: &mut usize,
+) -> Result<(), String> {
+    if config.provider == Provider::Ollama {
+        return request_ollama_stream(config, prompt, max_tokens, agent, emit, output, output_chars);
+    }
+
     let (request, body) = match config.provider {
-        Provider::Ollama | Provider::OpenAiCompatible => {
+        Provider::OpenAiCompatible => {
             let url = format!("{}/chat/completions", config.endpoint.trim_end_matches('/'));
             let request = agent.post(&url);
             let request = if let Some(key) = config.api_key.as_ref() {
                 request.header("Authorization", &format!("Bearer {}", key.as_str()))
-            } else if config.provider == Provider::Ollama {
-                request.header("Authorization", "Bearer ollama")
             } else {
                 request
             };
@@ -570,10 +645,10 @@ fn request_model_with_token_limit(config: &RequestConfig, prompt: &str, max_toke
             (request, body)
         }
         Provider::Claude => {
-            let url = "https://api.anthropic.com/v1/messages".to_string();
+            let url = "https://api.anthropic.com/v1/messages";
             let key = config.api_key.as_ref().map(|key| key.as_str()).unwrap_or_default();
             let request = agent
-                .post(&url)
+                .post(url)
                 .header("x-api-key", key)
                 .header("anthropic-version", "2026-10-21");
             let body = json!({
@@ -584,17 +659,16 @@ fn request_model_with_token_limit(config: &RequestConfig, prompt: &str, max_toke
             });
             (request, body)
         }
+        Provider::Ollama => unreachable!("Ollama requests use its streaming endpoint"),
     };
 
-    let mut response = request.send_json(body).map_err(|error| {
-        // Do not include the request or headers in the error; they may contain a secret key.
-        let _ = error;
+    let mut response = request.send_json(body).map_err(|_| {
         format!("Não foi possível chamar {}. Confira conexão, modelo, endereço e chave.", config.provider.label().trim())
     })?;
     let value: Value = response.body_mut().read_json()
         .map_err(|_| format!("{} retornou uma resposta que não pôde ser lida.", config.provider.label().trim()))?;
     let text = match config.provider {
-        Provider::Ollama | Provider::OpenAiCompatible => value
+        Provider::OpenAiCompatible => value
             .pointer("/choices/0/message/content")
             .and_then(Value::as_str)
             .map(str::to_owned)
@@ -607,14 +681,80 @@ fn request_model_with_token_limit(config: &RequestConfig, prompt: &str, max_toke
             .get("content")
             .and_then(Value::as_array)
             .map(|parts| parts.iter().filter_map(|part| part.get("text").and_then(Value::as_str)).collect::<Vec<_>>().join("\n")),
+        Provider::Ollama => None,
     }
     .unwrap_or_default();
     if text.trim().is_empty() {
         let detail = value.pointer("/error/message").and_then(Value::as_str).unwrap_or("nenhum texto foi retornado");
         return Err(format!("A API não retornou texto: {detail}"));
     }
-    if text.chars().count() > MAX_OUTPUT_CHARS {
+    append_output(output, output_chars, &text, emit)
+}
+
+fn request_ollama_stream(
+    config: &RequestConfig,
+    prompt: &str,
+    max_tokens: usize,
+    agent: &ureq::Agent,
+    emit: &mut impl FnMut(String) -> Result<(), String>,
+    output: &mut String,
+    output_chars: &mut usize,
+) -> Result<(), String> {
+    let endpoint = config.endpoint.trim_end_matches('/');
+    let root = endpoint.strip_suffix("/v1").unwrap_or(endpoint);
+    let url = format!("{root}/api/chat");
+    let keep_alive = if config.keep_ollama_loaded { "10m" } else { "0" };
+    let body = json!({
+        "model": config.model,
+        "messages": [
+            {"role":"system", "content":INSTRUCTIONS},
+            {"role":"user", "content":prompt}
+        ],
+        "stream": true,
+        "keep_alive": keep_alive,
+        "options": {"num_predict": max_tokens}
+    });
+    let mut response = agent.post(&url).send_json(body).map_err(|_| {
+        "Não foi possível conectar ao Ollama. Confira se ele está aberto, se o modelo foi baixado e se o endereço está correto.".to_string()
+    })?;
+    let mut reader = BufReader::new(response.body_mut().as_reader());
+    let mut line = String::new();
+    let mut received_text = false;
+    loop {
+        line.clear();
+        let bytes = reader.read_line(&mut line).map_err(|_| "A conexão com o Ollama foi interrompida.".to_string())?;
+        if bytes == 0 {
+            break;
+        }
+        if line.trim().is_empty() {
+            continue;
+        }
+        let value: Value = serde_json::from_str(line.trim())
+            .map_err(|_| "O Ollama enviou um trecho que o WordCraft não conseguiu ler.".to_string())?;
+        if let Some(error) = value.get("error").and_then(Value::as_str) {
+            return Err(format!("Ollama: {error}"));
+        }
+        if let Some(text) = value.pointer("/message/content").and_then(Value::as_str).filter(|text| !text.is_empty()) {
+            received_text = true;
+            append_output(output, output_chars, text, emit)?;
+        }
+    }
+    if !received_text {
+        return Err("Ollama terminou sem retornar texto. Confira se o modelo selecionado é compatível com chat.".into());
+    }
+    Ok(())
+}
+
+fn append_output(
+    output: &mut String,
+    output_chars: &mut usize,
+    text: &str,
+    emit: &mut impl FnMut(String) -> Result<(), String>,
+) -> Result<(), String> {
+    *output_chars += text.chars().count();
+    if *output_chars > MAX_OUTPUT_CHARS {
         return Err("A resposta passou do limite de tamanho do WordCraft.".into());
     }
-    Ok(text)
+    output.push_str(text);
+    emit(text.to_string())
 }
