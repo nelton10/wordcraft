@@ -14,10 +14,13 @@ use zeroize::{Zeroize, Zeroizing};
 const MAX_PROMPT_CHARS: usize = 10_000;
 const MAX_OUTPUT_CHARS: usize = 40_000;
 const INSTRUCTIONS: &str = concat!(
-    "Você é o assistente de redação integrado ao WordCraft. Responda em português brasileiro, a menos que o usuário peça outro idioma. ",
-    "Quando pedirem uma prova ou atividade, produza um material pronto para uso, com título, identificação, instruções, questões numeradas ",
-    "e alternativas quando fizer sentido. Escreva em texto simples, com parágrafos, sem tabelas Markdown nem cercas de código. ",
-    "Não diga que inseriu o texto no documento; o aplicativo fará isso."
+    "Você é o agente de redação integrado ao WordCraft. Responda em português brasileiro, a menos que o usuário peça outro idioma. ",
+    "Trate cada pedido como uma tarefa a concluir: identifique silenciosamente todos os requisitos explícitos (tema, público, quantidade, formato, ",
+    "tom e limites), produza o resultado completo e confira antes de responder se cada requisito foi atendido. Não ignore detalhes nem substitua ",
+    "o pedido por uma explicação sobre como fazê-lo. Se faltar um dado essencial, adote uma opção razoável sem inventar informações pessoais; ",
+    "se não for possível prosseguir com segurança, faça uma pergunta curta. Quando pedirem uma prova ou atividade, entregue o material pronto para uso, ",
+    "com título, identificação, instruções, a quantidade exata de questões pedida e gabarito apenas se solicitado. ",
+    "Escreva em texto simples, com parágrafos, sem tabelas Markdown nem cercas de código. Não diga que inseriu o texto no documento; o aplicativo fará isso."
 );
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -307,6 +310,7 @@ impl AiAgent {
             }
         });
         ui.label("Peça para redigir ou organizar conteúdo. O resultado pode ser inserido no documento aberto.");
+        ui.small("Modo agente: segue os detalhes do pedido e revisa a resposta antes de concluir.");
         ui.add_space(6.0);
         ui.add(
             egui::TextEdit::multiline(&mut self.prompt)
@@ -662,8 +666,8 @@ fn request_model_with_token_limit(
         Provider::Ollama => unreachable!("Ollama requests use its streaming endpoint"),
     };
 
-    let mut response = request.send_json(body).map_err(|_| {
-        format!("Não foi possível chamar {}. Confira conexão, modelo, endereço e chave.", config.provider.label().trim())
+    let mut response = request.send_json(body).map_err(|error| {
+        format!("{} não concluiu a solicitação ({error}). Confira a conexão, o modelo, o endereço e a chave.", config.provider.label().trim())
     })?;
     let value: Value = response.body_mut().read_json()
         .map_err(|_| format!("{} retornou uma resposta que não pôde ser lida.", config.provider.label().trim()))?;
@@ -714,8 +718,8 @@ fn request_ollama_stream(
         "keep_alive": keep_alive,
         "options": {"num_predict": max_tokens}
     });
-    let mut response = agent.post(&url).send_json(body).map_err(|_| {
-        "Não foi possível conectar ao Ollama. Confira se ele está aberto, se o modelo foi baixado e se o endereço está correto.".to_string()
+    let mut response = agent.post(&url).send_json(body).map_err(|error| {
+        format!("Ollama não concluiu a solicitação ({error}). Confira se o Ollama está aberto, se o modelo foi baixado e se o endereço está correto.")
     })?;
     let mut reader = BufReader::new(response.body_mut().as_reader());
     let mut line = String::new();
