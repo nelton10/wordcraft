@@ -121,14 +121,14 @@ impl eframe::App for App {
         self.0.raw_input_hook(ctx, raw);
     }
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
-        self.0.ui(ui);
         let ctx = ui.ctx().clone();
         if ctx.viewport_id() == self.0.active_viewport() {
             #[cfg(target_os = "macos")]
-            self.6.show(&ctx, &mut self.0, frame);
+            self.6.show(ui, &mut self.0, frame);
             #[cfg(not(target_os = "macos"))]
-            self.5.show(&ctx, &mut self.0, frame);
+            self.5.show(ui, &mut self.0, frame);
         }
+        self.0.ui(ui);
         self.3.show(frame);
     }
     fn on_exit(&mut self) {
