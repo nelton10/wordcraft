@@ -72,6 +72,12 @@ struct RequestConfig {
     api_key: Option<Zeroizing<String>>,
 }
 
+#[cfg(target_os = "windows")]
+struct EmbeddedDeepSeek {
+    _context: wry::WebContext,
+    view: wry::WebView,
+}
+
 pub struct AiAgent {
     config_dialog_open: bool,
     provider: Provider,
@@ -85,6 +91,10 @@ pub struct AiAgent {
     status: String,
     pending: Option<Receiver<Result<String, String>>>,
     insert_when_ready: bool,
+    #[cfg(target_os = "windows")]
+    deepseek_open: bool,
+    #[cfg(target_os = "windows")]
+    deepseek_view: Option<EmbeddedDeepSeek>,
 }
 
 impl Default for AiAgent {
@@ -103,6 +113,10 @@ impl Default for AiAgent {
             status: String::new(),
             pending: None,
             insert_when_ready: false,
+            #[cfg(target_os = "windows")]
+            deepseek_open: false,
+            #[cfg(target_os = "windows")]
+            deepseek_view: None,
         }
     }
 }
@@ -113,7 +127,7 @@ impl AiAgent {
         Self { config_dialog_open: true, window_open: true, ..Self::default() }
     }
 
-    pub fn show(&mut self, ctx: &egui::Context, app: &mut WordApp) {
+    pub fn show(&mut self, ctx: &egui::Context, app: &mut WordApp, frame: &eframe::Frame) {
         self.receive_result(app);
         if self.config_dialog_open {
             self.show_config_dialog(ctx);
@@ -122,19 +136,26 @@ impl AiAgent {
             let mut open = self.window_open;
             egui::Window::new("Assistente de IA")
                 .open(&mut open)
+                .default_pos([20.0, 110.0])
                 .default_size([460.0, 520.0])
                 .resizable(true)
                 .show(ctx, |ui| self.show_chat(ui, app));
             self.window_open = open;
         } else {
+            #[cfg(target_os = "windows")]
+            let anchor = if self.deepseek_open { egui::Align2::LEFT_BOTTOM } else { egui::Align2::RIGHT_BOTTOM };
+            #[cfg(not(target_os = "windows"))]
+            let anchor = egui::Align2::RIGHT_BOTTOM;
             egui::Area::new(egui::Id::unique("wordcraft.ai.open"))
-                .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-20.0, -36.0))
+                .anchor(anchor, egui::vec2(20.0, -36.0))
                 .show(ctx, |ui| {
                     if ui.button("✦ Assistente IA").clicked() {
                         self.window_open = true;
                     }
                 });
         }
+        #[cfg(target_os = "windows")]
+        self.sync_deepseek_view(ctx, frame);
     }
 
     fn show_config_dialog(&mut self, ctx: &egui::Context) {
@@ -221,10 +242,13 @@ impl AiAgent {
     fn show_chat(&mut self, ui: &mut egui::Ui, app: &mut WordApp) {
         ui.horizontal(|ui| {
             ui.label(format!("{} · {}", self.provider.label().trim(), self.model));
-            if ui.button("Abrir DeepSeek Web").clicked() {
-                self.status = match webbrowser::open("https://chat.deepseek.com/") {
-                    Ok(()) => "DeepSeek aberto no navegador. Posicione a janela ao lado do WordCraft e entre na sua conta.".into(),
-                    Err(_) => "Não consegui abrir o navegador. Acesse https://chat.deepseek.com/ manualmente.".into(),
+            #[cfg(target_os = "windows")]
+            if ui.button(if self.deepseek_open { "Fechar DeepSeek" } else { "DeepSeek no app" }).clicked() {
+                self.deepseek_open = !self.deepseek_open;
+                self.status = if self.deepseek_open {
+                    "DeepSeek está carregando no painel à direita dentro do WordCraft.".into()
+                } else {
+                    "Painel do DeepSeek fechado. A sessão permanece salva neste computador.".into()
                 };
             }
             if ui.button("Configurar IA").clicked() {
@@ -341,6 +365,66 @@ impl AiAgent {
             Ok(_) => self.status = "Conteúdo inserido no documento. Use Desfazer se quiser removê-lo.".into(),
             Err(error) => self.status = format!("Não foi possível inserir o conteúdo: {error}"),
         }
+    }
+
+    #[cfg(target_os = "windows")]
+    fn sync_deepseek_view(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
+        let Some(window) = frame.winit_window() else { return };
+        let scale = window.scale_factor();
+        if !scale.is_finite() || scale <= 0.0 {
+            return;
+        }
+        let physical = window.inner_size();
+        let width = f64::from(physical.width) / scale;
+        let height = f64::from(physical.height) / scale;
+        if width < 720.0 || height < 360.0 {
+            return;
+        }
+
+        // Keep the editor and assistant controls visible on the left; the native child WebView
+        // occupies a right-hand panel in the same WordCraft window.
+        let panel_width = (width * 0.46).clamp(360.0, 620.0).min(width - 360.0);
+        let bounds = wry::Rect {
+            position: wry::dpi::LogicalPosition::new(width - panel_width, 0.0).into(),
+            size: wry::dpi::LogicalSize::new(panel_width, height).into(),
+        };
+
+        if self.deepseek_open && self.deepseek_view.is_none() {
+            let data_directory = wordcraft_control_key::settings_dir().map(|path| path.join("deepseek-webview"));
+            let mut context = wry::WebContext::new(data_directory);
+            let result = wry::WebViewBuilder::new_with_web_context(&mut context)
+                .with_url("https://chat.deepseek.com/")
+                .with_bounds(bounds)
+                .with_visible(true)
+                .with_new_window_req_handler(|_, _| wry::NewWindowResponse::Deny)
+                .build_as_child(window);
+            match result {
+                Ok(view) => self.deepseek_view = Some(EmbeddedDeepSeek { _context: context, view }),
+                Err(error) => {
+                    self.deepseek_open = false;
+                    self.status = format!("Não foi possível abrir o painel do DeepSeek: {error}");
+                }
+            }
+        }
+
+        if let Some(webview) = self.deepseek_view.as_ref() {
+            if let Err(error) = webview.view.set_bounds(bounds) {
+                log::warn!("Could not resize embedded DeepSeek WebView: {error}");
+            }
+            if let Err(error) = webview.view.set_visible(self.deepseek_open && !self.config_dialog_open) {
+                log::warn!("Could not change embedded DeepSeek WebView visibility: {error}");
+            }
+        }
+        if self.deepseek_open {
+            ctx.request_repaint_after(Duration::from_millis(250));
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for EmbeddedDeepSeek {
+    fn drop(&mut self) {
+        let _ = self.view.set_visible(false);
     }
 }
 
