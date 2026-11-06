@@ -125,9 +125,9 @@ impl eframe::App for App {
         let ctx = ui.ctx().clone();
         if ctx.viewport_id() == self.0.active_viewport() {
             #[cfg(target_os = "macos")]
-            self.6.show(&ctx, &mut self.0);
+            self.6.show(&ctx, &mut self.0, frame);
             #[cfg(not(target_os = "macos"))]
-            self.5.show(&ctx, &mut self.0);
+            self.5.show(&ctx, &mut self.0, frame);
         }
         self.3.show(frame);
     }
