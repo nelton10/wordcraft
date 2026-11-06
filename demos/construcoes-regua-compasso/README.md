@@ -1,6 +1,6 @@
 # Construções com Régua e Compasso
 
-Apresentação interativa com animações passo a passo.
+Site educacional interativo sobre oito construções euclidianas. A página inicial apresenta o percurso e cada cartão abre a construção na apresentação animada, com explicações, justificativas e controles por etapa.
 
 ## Executar localmente
 
@@ -9,11 +9,11 @@ npm install
 npm run dev
 ```
 
-## Gerar versão para publicação
+## Gerar a versão de publicação
 
 ```bash
 npm run build
 npm run preview
 ```
 
-O conteúdo pronto para publicação é gerado na pasta `dist/`.
+O Vite gera os arquivos estáticos na pasta `dist/`. A apresentação passo a passo também pode ser aberta diretamente em `aula.html`.
