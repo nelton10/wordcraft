@@ -127,7 +127,7 @@ impl AiAgent {
                 .show(ctx, |ui| self.show_chat(ui, app));
             self.window_open = open;
         } else {
-            egui::Area::new(egui::Id::new("wordcraft.ai.open"))
+            egui::Area::new(egui::Id::unique("wordcraft.ai.open"))
                 .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-20.0, -36.0))
                 .show(ctx, |ui| {
                     if ui.button("✦ Assistente IA").clicked() {
@@ -139,7 +139,7 @@ impl AiAgent {
 
     fn show_config_dialog(&mut self, ctx: &egui::Context) {
         let mut close = false;
-        egui::Modal::new(egui::Id::new("wordcraft.ai.provider")).show(ctx, |ui| {
+        egui::Modal::new(egui::Id::unique("wordcraft.ai.provider")).show(ctx, |ui| {
             ui.set_min_width(420.0);
             ui.heading("Conectar assistente de IA");
             ui.label("Escolha um modelo local ou conecte uma API externa.");
@@ -173,7 +173,7 @@ impl AiAgent {
                 ui.add_space(6.0);
                 ui.label(if self.provider.needs_key() { "Chave da API" } else { "Chave da API (se exigida pelo serviço)" });
                 ui.add(
-                    egui::TextEdit::singleline(&mut self.key_input)
+                    egui::TextEdit::singleline(&mut *self.key_input)
                         .password(true)
                         .desired_width(f32::INFINITY)
                         .hint_text("A chave fica apenas nesta sessão"),
