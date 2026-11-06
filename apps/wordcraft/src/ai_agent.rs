@@ -381,7 +381,7 @@ fn request_model(config: &RequestConfig, prompt: &str) -> Result<String, String>
             let request = agent
                 .post(&url)
                 .header("x-api-key", key)
-                .header("anthropic-version", "2023-06-01");
+                .header("anthropic-version", "2026-10-21");
             let body = json!({
                 "model": config.model,
                 "max_tokens": 4000,
