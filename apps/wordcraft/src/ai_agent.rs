@@ -221,6 +221,12 @@ impl AiAgent {
     fn show_chat(&mut self, ui: &mut egui::Ui, app: &mut WordApp) {
         ui.horizontal(|ui| {
             ui.label(format!("{} · {}", self.provider.label().trim(), self.model));
+            if ui.button("Abrir DeepSeek Web").clicked() {
+                self.status = match webbrowser::open("https://chat.deepseek.com/") {
+                    Ok(()) => "DeepSeek aberto no navegador. Posicione a janela ao lado do WordCraft e entre na sua conta.".into(),
+                    Err(_) => "Não consegui abrir o navegador. Acesse https://chat.deepseek.com/ manualmente.".into(),
+                };
+            }
             if ui.button("Configurar IA").clicked() {
                 self.key_input.zeroize();
                 self.config_dialog_open = true;

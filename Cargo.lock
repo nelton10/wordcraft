@@ -6818,6 +6818,7 @@ dependencies = [
  "rfd",
  "serde_json",
  "ureq",
+ "webbrowser",
  "zeroize",
  "windows",
  "winit",

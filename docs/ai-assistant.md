@@ -20,6 +20,14 @@ during the current session.
 | Anthropic Claude | Enter a Claude model name (default `claude-sonnet-4-6`) and an Anthropic API key. |
 | OpenAI-compatible API | Enter the model, base endpoint and optional key. This supports OpenAI and compatible services such as OpenRouter, Groq, and DeepSeek. |
 
+## DeepSeek Web without an API key
+
+Choose **Open DeepSeek Web** in the assistant header to open `https://chat.deepseek.com/` in the
+system browser. Sign in to your DeepSeek account there and keep the chat beside WordCraft by placing
+the browser window next to the app. This uses the DeepSeek website, not its API: prompts and replies
+stay in the browser, so copy the response and paste it into WordCraft yourself. The site is not
+embedded in the egui desktop window.
+
 Cloud provider keys are sent only to the selected provider over HTTPS. API usage and billing follow
 the account and terms of that provider. The compatible endpoint setting is intended for trusted
 services; the key is sent to that configured endpoint.

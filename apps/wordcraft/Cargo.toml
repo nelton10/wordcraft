@@ -81,6 +81,7 @@ clipboard-win = { version = "5.4", features = ["std"] }
 craft-print = { git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0" }
 rfd = { workspace = true }
 ureq = { version = "3.5", features = ["json"] }
+webbrowser = "1.2"
 # Waits for an `rfd::AsyncFileDialog` on a background thread (the dialogs don't block the UI, #94);
 # rfd itself already depends on it.
 pollster = "1"
