@@ -1,9 +1,11 @@
 # AI writing assistant
 
-The native WordCraft desktop app includes an assistant that can draft text and insert it into the
-open document. Ask it to create a classroom test, review the generated preview, or use **Generate and
-insert into Word** to add the result directly. If no document is open, WordCraft creates a blank
-document first. The insertion is a normal document edit and can be undone.
+The native WordCraft desktop app includes a docked chat panel beside the document. Choose **Chat IA**
+for Ollama or an API provider, or **DeepSeek Web** to use the DeepSeek website in the same panel.
+Review generated API responses and insert them into the open document, or use **Generate and insert
+into Word** to add them directly. In DeepSeek Web, copy the response and choose **Colar no documento**.
+If no document is open, WordCraft creates a blank document first. Insertions are normal document edits
+and can be undone.
 
 ## Choose a provider at launch
 
@@ -22,13 +24,19 @@ during the current session.
 
 ## DeepSeek Web without an API key
 
-On Windows, choose **DeepSeek no app** in the assistant header to show `https://chat.deepseek.com/`
-in a panel on the right side of the same WordCraft window. No separate browser window is opened.
-Sign in inside that panel; the WebView profile is kept in WordCraft's settings folder so the login
-can persist between launches. This uses the DeepSeek website, not its API: prompts and replies stay
-in the website, so copy a response and paste it into WordCraft yourself. Choose **Fechar DeepSeek**
-to hide the panel. On other desktop platforms, use the OpenAI-compatible API option with a DeepSeek
-API endpoint if you want DeepSeek inside the assistant's normal chat UI.
+On Windows, **DeepSeek Web** loads `https://chat.deepseek.com/` inside the docked panel, not in a
+separate window. Sign in there; the WebView profile is kept in WordCraft's settings folder so the
+login can persist between launches. This uses the DeepSeek website, not its API. Copy a response and
+choose **Colar no documento** to insert it into the current WordCraft document. The API and Ollama
+chat use WordCraft's native controls in the same docked panel. On other desktop platforms, DeepSeek
+is available through an OpenAI-compatible API endpoint.
+
+## Split long Ollama responses
+
+For Ollama, enable **Dividir resposta para o Ollama** and choose 2–8 parts. WordCraft sends those
+requests one at a time and combines the results into one preview. Each part has a lower output-token
+limit, which can help on computers that struggle with long generations. The setting affects Ollama;
+other providers continue to use one request per response.
 
 Cloud provider keys are sent only to the selected provider over HTTPS. API usage and billing follow
 the account and terms of that provider. The compatible endpoint setting is intended for trusted
