@@ -91,10 +91,14 @@ pub struct AiAgent {
     status: String,
     pending: Option<Receiver<Result<String, String>>>,
     insert_when_ready: bool,
+    split_response: bool,
+    split_parts: usize,
     #[cfg(target_os = "windows")]
     deepseek_open: bool,
     #[cfg(target_os = "windows")]
     deepseek_view: Option<EmbeddedDeepSeek>,
+    #[cfg(target_os = "windows")]
+    deepseek_bounds: Option<egui::Rect>,
 }
 
 impl Default for AiAgent {
@@ -113,10 +117,14 @@ impl Default for AiAgent {
             status: String::new(),
             pending: None,
             insert_when_ready: false,
+            split_response: false,
+            split_parts: 3,
             #[cfg(target_os = "windows")]
             deepseek_open: false,
             #[cfg(target_os = "windows")]
             deepseek_view: None,
+            #[cfg(target_os = "windows")]
+            deepseek_bounds: None,
         }
     }
 }
@@ -127,35 +135,76 @@ impl AiAgent {
         Self { config_dialog_open: true, window_open: true, ..Self::default() }
     }
 
-    pub fn show(&mut self, ctx: &egui::Context, app: &mut WordApp, frame: &eframe::Frame) {
+    pub fn show(&mut self, ui: &mut egui::Ui, app: &mut WordApp, frame: &eframe::Frame) {
+        let ctx = ui.ctx().clone();
         self.receive_result(app);
         if self.config_dialog_open {
-            self.show_config_dialog(ctx);
+            self.show_config_dialog(&ctx);
         }
         if self.window_open {
-            let mut open = self.window_open;
-            egui::Window::new("Assistente de IA")
-                .open(&mut open)
-                .default_pos([20.0, 110.0])
-                .default_size([460.0, 520.0])
-                .resizable(true)
-                .show(ctx, |ui| self.show_chat(ui, app));
-            self.window_open = open;
-        } else {
             #[cfg(target_os = "windows")]
-            let anchor = if self.deepseek_open { egui::Align2::LEFT_BOTTOM } else { egui::Align2::RIGHT_BOTTOM };
-            #[cfg(not(target_os = "windows"))]
-            let anchor = egui::Align2::RIGHT_BOTTOM;
+            let mut web_rect = None;
+            egui::SidePanel::right("wordcraft.ai.docked-panel")
+                .default_width(420.0)
+                .width_range(320.0..=640.0)
+                .resizable(true)
+                .show_inside(ui, |panel| {
+                    panel.horizontal(|panel| {
+                        panel.heading("Assistente");
+                        panel.with_layout(egui::Layout::right_to_left(egui::Align::Center), |panel| {
+                            if panel.small_button("×").on_hover_text("Fechar painel").clicked() {
+                                self.window_open = false;
+                            }
+                        });
+                    });
+                    panel.horizontal(|panel| {
+                        #[cfg(target_os = "windows")]
+                        {
+                            if panel.selectable_label(!self.deepseek_open, "Chat IA").clicked() {
+                                self.deepseek_open = false;
+                            }
+                            if panel.selectable_label(self.deepseek_open, "DeepSeek Web").clicked() {
+                                self.deepseek_open = true;
+                                self.status = "DeepSeek está aberto neste painel do WordCraft.".into();
+                            }
+                            if self.deepseek_open && panel.button("Colar no documento").clicked() {
+                                self.insert_clipboard_into_document(app);
+                            }
+                        }
+                        #[cfg(not(target_os = "windows"))]
+                        panel.label("Chat IA");
+                    });
+                    panel.separator();
+                    #[cfg(target_os = "windows")]
+                    if self.deepseek_open {
+                        let size = panel.available_size();
+                        let (rect, _) = panel.allocate_exact_size(size, egui::Sense::hover());
+                        web_rect = Some(rect);
+                    } else {
+                        self.show_chat(panel, app);
+                    }
+                    #[cfg(not(target_os = "windows"))]
+                    self.show_chat(panel, app);
+                });
+            #[cfg(target_os = "windows")]
+            {
+                self.deepseek_bounds = web_rect;
+                self.sync_deepseek_view(&ctx, frame);
+            }
+        } else {
             egui::Area::new(egui::Id::unique("wordcraft.ai.open"))
-                .anchor(anchor, egui::vec2(20.0, -36.0))
+                .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-20.0, -36.0))
                 .show(ctx, |ui| {
                     if ui.button("✦ Assistente IA").clicked() {
                         self.window_open = true;
                     }
                 });
+            #[cfg(target_os = "windows")]
+            {
+                self.deepseek_bounds = None;
+                self.sync_deepseek_view(&ctx, frame);
+            }
         }
-        #[cfg(target_os = "windows")]
-        self.sync_deepseek_view(ctx, frame);
     }
 
     fn show_config_dialog(&mut self, ctx: &egui::Context) {
@@ -242,15 +291,6 @@ impl AiAgent {
     fn show_chat(&mut self, ui: &mut egui::Ui, app: &mut WordApp) {
         ui.horizontal(|ui| {
             ui.label(format!("{} · {}", self.provider.label().trim(), self.model));
-            #[cfg(target_os = "windows")]
-            if ui.button(if self.deepseek_open { "Fechar DeepSeek" } else { "DeepSeek no app" }).clicked() {
-                self.deepseek_open = !self.deepseek_open;
-                self.status = if self.deepseek_open {
-                    "DeepSeek está carregando no painel à direita dentro do WordCraft.".into()
-                } else {
-                    "Painel do DeepSeek fechado. A sessão permanece salva neste computador.".into()
-                };
-            }
             if ui.button("Configurar IA").clicked() {
                 self.key_input.zeroize();
                 self.config_dialog_open = true;
@@ -263,6 +303,17 @@ impl AiAgent {
                 .desired_rows(4)
                 .hint_text("Ex.: Crie uma prova de matemática para o 1º ano, com 10 questões sobre porcentagem e gabarito."),
         );
+        if self.provider == Provider::Ollama {
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut self.split_response, "Dividir resposta para o Ollama");
+                if self.split_response {
+                    ui.add(egui::DragValue::new(&mut self.split_parts).range(2..=8).suffix(" partes"));
+                }
+            });
+            if self.split_response {
+                ui.small("Ollama receberá solicitações sequenciais, com uma parte por vez.");
+            }
+        }
         ui.horizontal(|ui| {
             let disabled = self.pending.is_some() || !self.is_configured() || self.prompt.trim().is_empty();
             if ui.add_enabled(!disabled, egui::Button::new("Gerar resposta")).clicked() {
@@ -290,6 +341,15 @@ impl AiAgent {
         }
         if insert_preview && let Some(text) = self.generated.clone() {
             self.insert_into_document(app, text);
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    fn insert_clipboard_into_document(&mut self, app: &mut WordApp) {
+        match arboard::Clipboard::new().and_then(|mut clipboard| clipboard.get_text()) {
+            Ok(text) if !text.trim().is_empty() => self.insert_into_document(app, text),
+            Ok(_) => self.status = "A área de transferência está vazia.".into(),
+            Err(_) => self.status = "Não foi possível ler o texto copiado no DeepSeek.".into(),
         }
     }
 
@@ -321,17 +381,26 @@ impl AiAgent {
             api_key: self.api_key.as_ref().map(|key| Zeroizing::new(key.as_str().to_string())),
         };
         let prompt = prompt.to_string();
+        let split_parts = (self.provider == Provider::Ollama && self.split_response)
+            .then_some(self.split_parts.clamp(2, 8));
         let (tx, rx) = channel();
         let repaint = ctx.clone();
         std::thread::spawn(move || {
-            let result = request_model(&config, &prompt);
+            let result = match split_parts {
+                Some(parts) => request_model_in_parts(&config, &prompt, parts),
+                None => request_model(&config, &prompt),
+            };
             let _ = tx.send(result);
             repaint.request_repaint();
         });
         self.pending = Some(rx);
         self.insert_when_ready = insert_when_ready;
         self.generated = None;
-        self.status = format!("Enviando solicitação para {}…", self.provider.label().trim());
+        self.status = if let Some(parts) = split_parts {
+            format!("Ollama vai gerar a resposta em {parts} partes sequenciais…")
+        } else {
+            format!("Enviando solicitação para {}…", self.provider.label().trim())
+        };
     }
 
     fn receive_result(&mut self, app: &mut WordApp) {
@@ -370,23 +439,19 @@ impl AiAgent {
     #[cfg(target_os = "windows")]
     fn sync_deepseek_view(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
         let Some(window) = frame.winit_window() else { return };
+        let Some(rect) = self.deepseek_bounds else {
+            if let Some(webview) = self.deepseek_view.as_ref() {
+                let _ = webview.view.set_visible(false);
+            }
+            return;
+        };
         let scale = window.scale_factor();
-        if !scale.is_finite() || scale <= 0.0 {
+        if !scale.is_finite() || scale <= 0.0 || rect.width() < 100.0 || rect.height() < 100.0 {
             return;
         }
-        let physical = window.inner_size();
-        let width = f64::from(physical.width) / scale;
-        let height = f64::from(physical.height) / scale;
-        if width < 720.0 || height < 360.0 {
-            return;
-        }
-
-        // Keep the editor and assistant controls visible on the left; the native child WebView
-        // occupies a right-hand panel in the same WordCraft window.
-        let panel_width = (width * 0.46).clamp(360.0, 620.0).min(width - 360.0);
         let bounds = wry::Rect {
-            position: wry::dpi::LogicalPosition::new(width - panel_width, 0.0).into(),
-            size: wry::dpi::LogicalSize::new(panel_width, height).into(),
+            position: wry::dpi::LogicalPosition::new(f64::from(rect.min.x), f64::from(rect.min.y)).into(),
+            size: wry::dpi::LogicalSize::new(f64::from(rect.width()), f64::from(rect.height())).into(),
         };
 
         if self.deepseek_open && self.deepseek_view.is_none() {
@@ -396,6 +461,7 @@ impl AiAgent {
                 .with_url("https://chat.deepseek.com/")
                 .with_bounds(bounds)
                 .with_visible(true)
+                .with_clipboard(true)
                 .with_new_window_req_handler(|_, _| wry::NewWindowResponse::Deny)
                 .build_as_child(window);
             match result {
@@ -411,7 +477,7 @@ impl AiAgent {
             if let Err(error) = webview.view.set_bounds(bounds) {
                 log::warn!("Could not resize embedded DeepSeek WebView: {error}");
             }
-            if let Err(error) = webview.view.set_visible(self.deepseek_open && !self.config_dialog_open) {
+            if let Err(error) = webview.view.set_visible(self.window_open && self.deepseek_open && !self.config_dialog_open) {
                 log::warn!("Could not change embedded DeepSeek WebView visibility: {error}");
             }
         }
@@ -429,6 +495,43 @@ impl Drop for EmbeddedDeepSeek {
 }
 
 fn request_model(config: &RequestConfig, prompt: &str) -> Result<String, String> {
+    request_model_with_token_limit(config, prompt, 4000)
+}
+
+fn request_model_in_parts(config: &RequestConfig, prompt: &str, parts: usize) -> Result<String, String> {
+    let mut response = String::new();
+    for part in 1..=parts {
+        let previous_tail = response
+            .chars()
+            .rev()
+            .take(400)
+            .collect::<String>()
+            .chars()
+            .rev()
+            .collect::<String>();
+        let continuation = if previous_tail.is_empty() {
+            String::new()
+        } else {
+            format!("\n\nTrecho final da parte anterior, apenas para manter a continuidade: {previous_tail}")
+        };
+        let part_prompt = format!(
+            "{prompt}{continuation}\n\nDivida o material solicitado em exatamente {parts} partes sequenciais, com tamanho parecido. \
+             Agora escreva somente a parte {part} de {parts}. Não repita o que já foi pedido e não escreva as outras partes. \
+             Mantenha a numeração contínua e termine esta parte em um ponto natural. Limite esta parte a aproximadamente 900 tokens."
+        );
+        let text = request_model_with_token_limit(config, &part_prompt, 1200)?;
+        if !response.is_empty() {
+            response.push_str("\n\n");
+        }
+        response.push_str(&text);
+        if response.chars().count() > MAX_OUTPUT_CHARS {
+            return Err("A resposta dividida passou do limite de tamanho do WordCraft.".into());
+        }
+    }
+    Ok(response)
+}
+
+fn request_model_with_token_limit(config: &RequestConfig, prompt: &str, max_tokens: usize) -> Result<String, String> {
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(90)))
         .build()
@@ -447,7 +550,7 @@ fn request_model(config: &RequestConfig, prompt: &str) -> Result<String, String>
             let body = json!({
                 "model": config.model,
                 "messages": [{"role":"system", "content":INSTRUCTIONS}, {"role":"user", "content":prompt}],
-                "max_tokens": 4000
+                "max_tokens": max_tokens
             });
             (request, body)
         }
@@ -461,7 +564,7 @@ fn request_model(config: &RequestConfig, prompt: &str) -> Result<String, String>
             let body = json!({
                 "systemInstruction": {"parts": [{"text": INSTRUCTIONS}]},
                 "contents": [{"role":"user", "parts": [{"text": prompt}]}],
-                "generationConfig": {"maxOutputTokens": 4000}
+                "generationConfig": {"maxOutputTokens": max_tokens}
             });
             (request, body)
         }
@@ -474,7 +577,7 @@ fn request_model(config: &RequestConfig, prompt: &str) -> Result<String, String>
                 .header("anthropic-version", "2026-10-21");
             let body = json!({
                 "model": config.model,
-                "max_tokens": 4000,
+                "max_tokens": max_tokens,
                 "system": INSTRUCTIONS,
                 "messages": [{"role":"user", "content":prompt}]
             });
