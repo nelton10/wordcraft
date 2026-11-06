@@ -10,6 +10,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod animations;
+mod ai_agent;
 #[cfg(target_os = "macos")]
 mod apple_events;
 mod clipboard;
@@ -43,6 +44,7 @@ struct App(
     // a hidden logic tick.
     RawWindowState,
     #[cfg(target_os = "macos")] fmv_macos_events::Inbox,
+    ai_agent::AiAgent,
 );
 
 impl eframe::App for App {
@@ -120,6 +122,13 @@ impl eframe::App for App {
     }
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         self.0.ui(ui);
+        let ctx = ui.ctx().clone();
+        if ctx.viewport_id() == self.0.active_viewport() {
+            #[cfg(target_os = "macos")]
+            self.6.show(&ctx, &mut self.0);
+            #[cfg(not(target_os = "macos"))]
+            self.5.show(&ctx, &mut self.0);
+        }
         self.3.show(frame);
     }
     fn on_exit(&mut self) {
@@ -617,6 +626,7 @@ fn main() -> eframe::Result {
                 RawWindowState::default(),
                 #[cfg(target_os = "macos")]
                 apple_events.connect(&cc.egui_ctx),
+                ai_agent::AiAgent::new(),
             )))
         }),
     )

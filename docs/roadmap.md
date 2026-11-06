@@ -64,16 +64,18 @@ partial rows are fidelity gaps (beta work), not broken workflows. WordCraft stay
 | M14 | 1.0 polish, packaging, signing | releases v0.1.0–v0.4.0 published (signed macOS, Windows MSI x64/x86/arm64, Linux, FreeBSD, web) | — |
 | M15 | Localization (12 key languages, RTL interface, proofing languages) | 28 UI languages from the shared catalogs pinned by `craft-i18n.rev` (Arabic mirrored UI #1195); proofing: English, Polish, Portuguese, Italian, Croatian, Turkish, Russian, Czech, Indonesian and Spanish, plus Bulgarian and German hyphenation only; Hebrew UI, native-speaker review and native IME acceptance (#155–#164) remain open | 55–95 h |
 | M16 | Right-to-left and East Asian typography | RTL paragraphs done (#207) | 30–45 h |
+| M17 | In-app AI writing assistant | done for the native desktop app: session-only OpenAI key entry, draft preview and insertion into the document | — |
 
 ## Next after beta
 
 Charts and SmartArt editing, the Draw tab, `.doc` writing, PDF Reflow, the remaining interface
-languages, screen-reader access, ecosystem decisions (VBA, add-ins, cloud), an in-app assistant.
+languages, screen-reader access and ecosystem decisions (VBA, add-ins, cloud).
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-06 | minor | Native desktop AI writing assistant: prompt at launch, session-only API key, preview and document insertion |
 | 2026-11-03 | trivial | DOCX text-frame anchor locks survive JSON and two save/reopen cycles, including position and size edits |
 | 2026-11-03 | minor | M15: Arabic mirrored interface (#1195); 28 UI languages from craft-i18n; Hebrew UI, native-speaker review and native IME acceptance (#155–#164) remain open |
 | 2026-10-29 | trivial | HTML import keeps preformatted lines with CR, CRLF or LF input newlines (#4810); numeric character references retain their separate meaning; readiness estimates unchanged. |
