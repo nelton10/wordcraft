@@ -144,9 +144,9 @@ impl AiAgent {
         if self.window_open {
             #[cfg(target_os = "windows")]
             let mut web_rect = None;
-            egui::SidePanel::right("wordcraft.ai.docked-panel")
-                .default_width(420.0)
-                .width_range(320.0..=640.0)
+            egui::Panel::right("wordcraft.ai.docked-panel")
+                .default_size(420.0)
+                .size_range(320.0..=640.0)
                 .resizable(true)
                 .show_inside(ui, |panel| {
                     panel.horizontal(|panel| {
@@ -194,7 +194,7 @@ impl AiAgent {
         } else {
             egui::Area::new(egui::Id::unique("wordcraft.ai.open"))
                 .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-20.0, -36.0))
-                .show(ctx, |ui| {
+                .show(&ctx, |ui| {
                     if ui.button("✦ Assistente IA").clicked() {
                         self.window_open = true;
                     }
