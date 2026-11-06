@@ -105,8 +105,9 @@ Every screenshot below is WordCraft itself, rendered offscreen by its own UI tes
 - **Built for agents.** Every action is a command with an id. The same 422 commands drive the
   ribbon, keyboard shortcuts, the command search, a command-line tool, a JSON control channel and
   an MCP server.
-- **AI writing assistant.** The desktop app can draft text through the OpenAI Responses API and
-  insert it into the current document; see [the assistant guide](docs/ai-assistant.md).
+- **AI writing assistant.** The desktop app can draft text with a local Ollama model, Google Gemini,
+  Anthropic Claude or an OpenAI-compatible API, then insert it into the current document; see
+  [the assistant guide](docs/ai-assistant.md).
 - **Private.** Spelling, grammar and everything else work offline.
 - **Open.** MIT OR Apache-2.0. Clean-room: built from public specifications and observation, with
   every asset original or openly licensed.
