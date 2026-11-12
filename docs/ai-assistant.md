@@ -21,6 +21,7 @@ during the current session.
 | Google Gemini | Enter a Gemini model name (default `gemini-3.8-flash`) and a Google AI Studio API key. |
 | Anthropic Claude | Enter a Claude model name (default `claude-sonnet-4-6`) and an Anthropic API key. |
 | OpenAI-compatible API | Enter the model, base endpoint and optional key. This supports OpenAI and compatible services such as OpenRouter, Groq, and DeepSeek. |
+| Amazon Bedrock | Enter a Bedrock model ID (default `amazon.nova-lite-v1:0`), a region-specific endpoint (default `https://bedrock-runtime.us-east-1.amazonaws.com`) and a Bedrock API key. The key must be valid in the selected region and have permission to invoke the model. |
 
 ## DeepSeek Web without an API key
 
@@ -38,7 +39,7 @@ requests one at a time and combines the results into one preview. Each part has 
 limit, which can help on computers that struggle with long generations. The setting affects Ollama;
 other providers continue to use one request per response.
 
-Cloud provider keys are sent only to the selected provider over HTTPS. API usage and billing follow
+For Amazon Bedrock, the assistant uses the Converse API with the Bedrock API key as a Bearer token. AWS recommends short-term keys or IAM credentials for production; long-term Bedrock keys are intended for exploration. The key in WordCraft remains in memory only.\n\nCloud provider keys are sent only to the selected provider over HTTPS. API usage and billing follow
 the account and terms of that provider. The compatible endpoint setting is intended for trusted
 services; the key is sent to that configured endpoint.
 
