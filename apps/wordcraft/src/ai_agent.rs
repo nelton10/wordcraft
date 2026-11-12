@@ -29,10 +29,11 @@ enum Provider {
     Gemini,
     Claude,
     OpenAiCompatible,
+    AmazonBedrock,
 }
 
 impl Provider {
-    const ALL: [Self; 4] = [Self::Ollama, Self::Gemini, Self::Claude, Self::OpenAiCompatible];
+    const ALL: [Self; 5] = [Self::Ollama, Self::Gemini, Self::Claude, Self::OpenAiCompatible, Self::AmazonBedrock];
 
     fn label(self) -> &'static str {
         match self {
@@ -40,6 +41,7 @@ impl Provider {
             Self::Gemini => "Google Gemini",
             Self::Claude => "Anthropic Claude",
             Self::OpenAiCompatible => "API compatível (OpenAI, OpenRouter, Groq, DeepSeek…)",
+            Self::AmazonBedrock => "Amazon Bedrock",
         }
     }
 
@@ -49,6 +51,7 @@ impl Provider {
             Self::Gemini => "gemini-3.8-flash",
             Self::Claude => "claude-sonnet-4-6",
             Self::OpenAiCompatible => "gpt-4.1-mini",
+            Self::AmazonBedrock => "amazon.nova-lite-v1:0",
         }
     }
 
@@ -56,16 +59,17 @@ impl Provider {
         match self {
             Self::Ollama => "http://localhost:11434/v1",
             Self::OpenAiCompatible => "https://api.openai.com/v1",
+            Self::AmazonBedrock => "https://bedrock-runtime.us-east-1.amazonaws.com",
             _ => "",
         }
     }
 
     fn needs_key(self) -> bool {
-        matches!(self, Self::Gemini | Self::Claude)
+        matches!(self, Self::Gemini | Self::Claude | Self::AmazonBedrock)
     }
 
     fn endpoint_is_editable(self) -> bool {
-        matches!(self, Self::Ollama | Self::OpenAiCompatible)
+        matches!(self, Self::Ollama | Self::OpenAiCompatible | Self::AmazonBedrock)
     }
 }
 
@@ -248,7 +252,12 @@ impl AiAgent {
             ui.add(egui::TextEdit::singleline(&mut self.model).desired_width(f32::INFINITY));
             if self.provider.endpoint_is_editable() {
                 ui.add_space(6.0);
-                ui.label(if self.provider == Provider::Ollama { "Endereço do Ollama" } else { "Endereço base da API" });
+                let endpoint_label = match self.provider {
+                    Provider::Ollama => "Endereço do Ollama",
+                    Provider::AmazonBedrock => "Endpoint do Bedrock (a região está no endereço)",
+                    _ => "Endereço base da API",
+                };
+                ui.label(endpoint_label);
                 ui.add(egui::TextEdit::singleline(&mut self.endpoint).desired_width(f32::INFINITY));
             }
 
@@ -268,6 +277,7 @@ impl AiAgent {
                 Provider::Gemini => "A solicitação será enviada ao Google Gemini usando sua chave de API.",
                 Provider::Claude => "A solicitação será enviada à Anthropic usando sua chave de API.",
                 Provider::OpenAiCompatible => "Use um endpoint compatível com /chat/completions, como OpenAI, OpenRouter, Groq ou DeepSeek.",
+                Provider::AmazonBedrock => "Use a chave de API do Bedrock e um endpoint da região onde ela foi criada. A chave fica apenas nesta sessão. Chaves longas são recomendadas pela AWS apenas para testes.",
             };
             ui.small(note);
             ui.small("Chaves não são salvas nas preferências, nos documentos ou no repositório.");
@@ -648,6 +658,18 @@ fn request_model_with_token_limit(
             });
             (request, body)
         }
+        Provider::AmazonBedrock => {
+            let endpoint = config.endpoint.trim_end_matches('/');
+            let url = format!("{endpoint}/model/{}/converse", config.model);
+            let key = config.api_key.as_ref().map(|key| key.as_str()).unwrap_or_default();
+            let request = agent.post(&url).header("Authorization", &format!("Bearer {key}"));
+            let body = json!({
+                "system": [{"text": INSTRUCTIONS}],
+                "messages": [{"role": "user", "content": [{"text": prompt}]}],
+                "inferenceConfig": {"maxTokens": max_tokens}
+            });
+            (request, body)
+        }
         Provider::Claude => {
             let url = "https://api.anthropic.com/v1/messages";
             let key = config.api_key.as_ref().map(|key| key.as_str()).unwrap_or_default();
@@ -685,11 +707,17 @@ fn request_model_with_token_limit(
             .get("content")
             .and_then(Value::as_array)
             .map(|parts| parts.iter().filter_map(|part| part.get("text").and_then(Value::as_str)).collect::<Vec<_>>().join("\n")),
+        Provider::AmazonBedrock => value
+            .pointer("/output/message/content")
+            .and_then(Value::as_array)
+            .map(|parts| parts.iter().filter_map(|part| part.get("text").and_then(Value::as_str)).collect::<Vec<_>>().join("\n")),
         Provider::Ollama => None,
     }
     .unwrap_or_default();
     if text.trim().is_empty() {
-        let detail = value.pointer("/error/message").and_then(Value::as_str).unwrap_or("nenhum texto foi retornado");
+        let detail = value.pointer("/error/message").and_then(Value::as_str)
+            .or_else(|| value.get("message").and_then(Value::as_str))
+            .unwrap_or("nenhum texto foi retornado");
         return Err(format!("A API não retornou texto: {detail}"));
     }
     append_output(output, output_chars, &text, emit)
