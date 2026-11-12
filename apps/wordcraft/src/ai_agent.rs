@@ -556,6 +556,8 @@ fn build_http_agent(provider: Provider) -> ureq::Agent {
     let timeout = if provider == Provider::Ollama { 600 } else { 90 };
     ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(timeout)))
+        // Keep non-2xx response bodies so providers can show their actual error messages.
+        .http_status_as_error(false)
         .build()
         .into()
 }
@@ -717,6 +719,7 @@ fn request_model_with_token_limit(
     if text.trim().is_empty() {
         let detail = value.pointer("/error/message").and_then(Value::as_str)
             .or_else(|| value.get("message").and_then(Value::as_str))
+            .or_else(|| value.get("error").and_then(Value::as_str))
             .unwrap_or("nenhum texto foi retornado");
         return Err(format!("A API não retornou texto: {detail}"));
     }
